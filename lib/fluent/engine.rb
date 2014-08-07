@@ -30,12 +30,13 @@ module Fluent
       @log_event_queue = []
 
       @suppress_config_dump = false
+      @default_time_unit = 'second'
     end
 
     MATCH_CACHE_SIZE = 1024
     LOG_EMIT_INTERVAL = 0.1
 
-    attr_reader :root_agent
+    attr_reader :root_agent, :default_time_unit
     attr_reader :matches, :sources
 
     def init(opts = {})
@@ -49,6 +50,9 @@ module Fluent
       suppress_interval(opts[:suppress_interval]) if opts[:suppress_interval]
       @suppress_config_dump = opts[:suppress_config_dump] if opts[:suppress_config_dump]
       @without_source = opts[:without_source] if opts[:without_source]
+      @default_time_unit = opts[:default_time_unit] if opts[:default_time_unit]
+
+      setup_now(@default_time_unit)
 
       @root_agent = RootAgent.new(opts)
 
@@ -57,6 +61,26 @@ module Fluent
 
     def log
       $log
+    end
+
+    def setup_now(default_time_unit)
+      m = case default_time_unit
+          when 'second'
+            method(:now_second)
+          when 'millisecond'
+            method(:now_millisecond)
+          end
+      (class << self; self; end).module_eval do
+        define_method(:now, m)
+      end
+    end
+
+    def now_second
+      Time.now.to_i
+    end
+
+    def now_millisecond
+      Time.now.to_f
     end
 
     def suppress_interval(interval_time)
@@ -118,11 +142,6 @@ module Fluent
 
     def flush!
       @root_agent.flush!
-    end
-
-    def now
-      # TODO thread update
-      Time.now.to_i
     end
 
     def log_event_loop
@@ -220,13 +239,17 @@ module Fluent
 
       Fluent.__send__(:remove_const, :Engine)
       engine = Fluent.const_set(:Engine, EngineClass.new).init
+      class << engine
+        alias_method :orig_now, :now
 
-      engine.define_singleton_method(:now=) {|n|
-        @now = n.to_i
-      }
-      engine.define_singleton_method(:now) {
-        @now || super()
-      }
+        def now=(n)
+          @now = n.to_i
+        end
+
+        def now
+          @now || orig_now()
+        end
+      end
 
       nil
     end
